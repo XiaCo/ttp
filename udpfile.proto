@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+message UDPFilePackage {
+  uint32 ack = 1;
+  string path = 2;
+  repeated uint32 number = 3;
+  uint32 start = 4;
+  uint32 speed = 5;
+  bytes data = 6;
+
+}
