@@ -3,63 +3,78 @@ package ttp
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 type Listener struct {
 	conn         *net.UDPConn
 	sessionMap   *sync.Map //map[string]*TTPSession
 	sessionQueue chan *TTPSession
+	over         uint32 // 0 or 1
 }
 
 func (l *Listener) Close() error {
-	return nil
+	atomic.StoreUint32(&l.over, 1)
+	close(l.sessionQueue)
+	return l.conn.Close()
 }
 
 func (l *Listener) Addr() net.Addr {
-	return nil
+	return l.conn.LocalAddr()
 }
 
 func (l *Listener) Accept() (net.Conn, error) {
-	return l.acceptTTPSession()
+	return l.AcceptTTPSession()
 }
 
-func (l *Listener) acceptTTPSession() (*TTPSession, error) {
-	go l.recv()
+func (l *Listener) closeSession(remoteAddr string) {
+	l.sessionMap.Delete(remoteAddr)
+}
+
+func (l *Listener) AcceptTTPSession() (*TTPSession, error) {
 	select {
 	case c := <-l.sessionQueue:
 		return c, nil
 	}
 }
 
-func (l *Listener) handle(remoteAddr *net.UDPAddr, buf []byte, uuid []byte) {
-	var ttp *TTP
-	copyuuid := [14]byte{}
-	copy(copyuuid[:], uuid)
-	ts := NewTTPSession(l.conn)
-	if sess, loaded := l.sessionMap.LoadOrStore(remoteAddr.String(), ts); loaded {
-		ttp = sess
+func (l *Listener) handle(remoteAddr *net.UDPAddr, buf []byte) {
+	var ts *TTPSession
+	if sess, exist := l.sessionMap.Load(remoteAddr.String()); exist {
+		ts = sess.(*TTPSession)
+	} else {
+		ts = NewTTPSession(l, remoteAddr)
+		l.sessionMap.Store(remoteAddr.String(), ts)
+		l.sessionQueue <- ts
 	}
-	b := bytePool.Get().([]byte)
-	copy(b, buf)
-	ttp.PutReadQueue(b)
+	ts.Read(buf)
 }
 
 func (l *Listener) recv() {
-	buf := make([]byte, 1024*32)
+	buf := make([]byte, ttpUnit)
 	for {
-		n, udpRemoteAddr, err := l.conn.ReadFromUDP(buf)
-		if err != nil {
-			panic(err)
+		if atomic.LoadUint32(&l.over) == 0 {
+			n, udpRemoteAddr, err := l.conn.ReadFromUDP(buf)
+			if err != nil {
+				if _, ok := err.(*net.OpError); ok {
+					return
+				}
+				panic(err)
+			}
+			l.handle(udpRemoteAddr, buf[:n])
+		} else {
+			return
 		}
-		l.handle(udpRemoteAddr, buf[:n-14], buf[n-14:n])
 	}
 }
 
 func NewListener(conn *net.UDPConn) *Listener {
 	l := &Listener{
-		conn:       conn,
-		sessionMap: new(sync.Map),
+		conn:         conn,
+		sessionMap:   new(sync.Map),
+		sessionQueue: make(chan *TTPSession, 64),
 	}
+	go l.recv()
 	return l
 }
 

@@ -4,12 +4,29 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
-	"net"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+const (
+	ttpUnit uint32 = 1472
+)
+
+var (
+	bytePool  sync.Pool
+	writePool sync.Pool
+)
+
+func init() {
+	bytePool.New = func() interface{} {
+		return make([]byte, ttpUnit)
+	}
+	writePool.New = func() interface{} {
+		return make([]byte, 0, ttpUnit)
+	}
+}
 
 func Int64ToBytes(data int64) (res [8]byte) {
 	buf := bytes.NewBuffer([]byte{})
@@ -96,16 +113,9 @@ type uuidGenerator struct {
 
 var uu = uuidGenerator{new(sync.Mutex)}
 
-func GetuuidByte(localAddr net.UDPAddr) [14]byte {
-	// todo ipv6
-	var uuid [14]byte
+func GetuuidByte() [8]byte {
 	uu.mu.Lock()
 	defer uu.mu.Unlock()
 	t := time.Now().UnixNano()
-	timeFlag := Int64ToBytes(t)
-	copy(uuid[:8], timeFlag[:])
-	copy(uuid[8:], localAddr.IP)
-	uuid[12] = uint8(localAddr.Port / 256)
-	uuid[13] = uint8(localAddr.Port % 256)
-	return uuid
+	return Int64ToBytes(t)
 }
