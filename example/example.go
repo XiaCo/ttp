@@ -13,7 +13,7 @@ func listen(addr string) {
 		panic(err)
 	}
 	for {
-		c, acceptErr := l.AcceptTTPSession()
+		c, acceptErr := l.AcceptTTP()
 		fmt.Println(c.RemoteAddr())
 		if acceptErr != nil {
 			fmt.Println(acceptErr)
@@ -33,7 +33,7 @@ func Client(addr string) {
 	}
 	go func() {
 		for {
-			c, acceptErr := l.AcceptTTPSession()
+			c, acceptErr := l.AcceptTTP()
 			fmt.Println(c.RemoteAddr())
 			if acceptErr != nil {
 				fmt.Println(acceptErr)
@@ -43,6 +43,12 @@ func Client(addr string) {
 
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
-	sess := ttp.NewTTPSession(l, remoteAddr)
-	sess.Pull("/Users/xia/java_error_in_goland.hprof", "./temp", 1000)
+	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
+	c, _ := net.DialUDP("udp4", localAddr, remoteAddr)
+	over := make(chan struct{})
+	tt := ttp.NewTTP(c, remoteAddr, over)
+	pullErr := tt.Pull("/Users/xia/java_error_in_goland.hprof", "./temp", 1000)
+	if pullErr != nil {
+		panic(err)
+	}
 }

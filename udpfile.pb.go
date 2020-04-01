@@ -63,6 +63,11 @@ func (m *UDPFilePackage) GetAck() uint32 {
 	}
 	return 0
 }
+func (m *UDPFilePackage) SetAck(n uint32) {
+	if m != nil {
+		m.Ack = n
+	}
+}
 
 func (m *UDPFilePackage) GetPath() string {
 	if m != nil {
@@ -71,11 +76,23 @@ func (m *UDPFilePackage) GetPath() string {
 	return ""
 }
 
-func (m *UDPFilePackage) GetNumber() []uint32 {
+func (m *UDPFilePackage) SetPath(s string) {
+	if m != nil {
+		m.Path = s
+	}
+}
+
+func (m *UDPFilePackage) GetNumbers() []uint32 {
 	if m != nil {
 		return m.Number
 	}
 	return nil
+}
+
+func (m *UDPFilePackage) SetNumbers(s []uint32) {
+	if m != nil {
+		m.Number = s
+	}
 }
 
 func (m *UDPFilePackage) GetStart() uint32 {
@@ -84,6 +101,11 @@ func (m *UDPFilePackage) GetStart() uint32 {
 	}
 	return 0
 }
+func (m *UDPFilePackage) SetStart(n uint32) {
+	if m != nil {
+		m.Start = n
+	}
+}
 
 func (m *UDPFilePackage) GetSpeed() uint32 {
 	if m != nil {
@@ -91,12 +113,22 @@ func (m *UDPFilePackage) GetSpeed() uint32 {
 	}
 	return 0
 }
+func (m *UDPFilePackage) SetSpeed(n uint32) {
+	if m != nil {
+		m.Speed = n
+	}
+}
 
 func (m *UDPFilePackage) GetData() []byte {
 	if m != nil {
 		return m.Data
 	}
 	return nil
+}
+func (m *UDPFilePackage) SetData(s []byte) {
+	if m != nil {
+		m.Data = s
+	}
 }
 
 func init() {

@@ -1,8 +1,6 @@
 package ttp
 
 import (
-	"bytes"
-	"encoding/binary"
 	"math"
 	"os"
 	"sync"
@@ -15,30 +13,13 @@ const (
 )
 
 var (
-	bytePool  sync.Pool
-	writePool sync.Pool
+	bytePool sync.Pool
 )
 
 func init() {
 	bytePool.New = func() interface{} {
 		return make([]byte, ttpUnit)
 	}
-	writePool.New = func() interface{} {
-		return make([]byte, 0, ttpUnit)
-	}
-}
-
-func Int64ToBytes(data int64) (res [8]byte) {
-	buf := bytes.NewBuffer([]byte{})
-	binary.Write(buf, binary.BigEndian, data)
-	copy(res[:], buf.Bytes())
-	return
-}
-
-func BytesToInt64(bys [8]byte) (n int64) {
-	buf := bytes.NewBuffer(bys[:])
-	binary.Read(buf, binary.BigEndian, &n)
-	return
 }
 
 func SplitFile(size int64) uint32 {
@@ -105,17 +86,4 @@ func NewSpeedCalculator(t time.Duration) *speedCalculator {
 		}
 	}()
 	return &s
-}
-
-type uuidGenerator struct {
-	mu *sync.Mutex
-}
-
-var uu = uuidGenerator{new(sync.Mutex)}
-
-func GetuuidByte() [8]byte {
-	uu.mu.Lock()
-	defer uu.mu.Unlock()
-	t := time.Now().UnixNano()
-	return Int64ToBytes(t)
 }

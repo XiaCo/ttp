@@ -1,21 +1,21 @@
 package ttp
 
 import (
+	"log"
 	"net"
 	"sync"
-	"sync/atomic"
 )
 
 type Listener struct {
-	conn         *net.UDPConn
-	sessionMap   *sync.Map //map[string]*TTPSession
-	sessionQueue chan *TTPSession
-	over         uint32 // 0 or 1
+	conn     *net.UDPConn
+	TTPMap   *sync.Map //map[string]*TTP
+	TTPQueue chan *TTP
+	over     chan struct{}
 }
 
 func (l *Listener) Close() error {
-	atomic.StoreUint32(&l.over, 1)
-	close(l.sessionQueue)
+	close(l.over)
+	close(l.TTPQueue)
 	return l.conn.Close()
 }
 
@@ -24,36 +24,51 @@ func (l *Listener) Addr() net.Addr {
 }
 
 func (l *Listener) Accept() (net.Conn, error) {
-	return l.AcceptTTPSession()
+	return l.AcceptTTP()
 }
 
-func (l *Listener) closeSession(remoteAddr string) {
-	l.sessionMap.Delete(remoteAddr)
+func (l *Listener) closeTTP(remoteAddr string) {
+	l.TTPMap.Delete(remoteAddr)
 }
 
-func (l *Listener) AcceptTTPSession() (*TTPSession, error) {
+func (l *Listener) AcceptTTP() (*TTP, error) {
 	select {
-	case c := <-l.sessionQueue:
-		return c, nil
+	case ttp := <-l.TTPQueue:
+		return ttp, nil
 	}
 }
 
 func (l *Listener) handle(remoteAddr *net.UDPAddr, buf []byte) {
-	var ts *TTPSession
-	if sess, exist := l.sessionMap.Load(remoteAddr.String()); exist {
-		ts = sess.(*TTPSession)
+	var tt *TTP
+	if sess, exist := l.TTPMap.Load(remoteAddr.String()); exist {
+		tt = sess.(*TTP)
 	} else {
-		ts = NewTTPSession(l, remoteAddr)
-		l.sessionMap.Store(remoteAddr.String(), ts)
-		l.sessionQueue <- ts
+		over := make(chan struct{})
+		tt = NewTTP(l.conn, remoteAddr, over)
+		log.Printf("任务开始，访问地址: %s\n", remoteAddr.String())
+		go func() {
+			select {
+			case <-tt.Done():
+				l.closeTTP(remoteAddr.String())
+				log.Printf("任务结束，删除ttp: %s\n", remoteAddr.String())
+			}
+		}()
+		l.TTPMap.Store(remoteAddr.String(), tt)
+		l.TTPQueue <- tt
 	}
-	ts.Read(buf)
+	// todo pool
+	b := make([]byte, len(buf))
+	copy(b, buf)
+	tt.Read(b)
 }
 
 func (l *Listener) recv() {
-	buf := make([]byte, ttpUnit)
+	buf := make([]byte, 1024*4)
 	for {
-		if atomic.LoadUint32(&l.over) == 0 {
+		select {
+		case <-l.over:
+			return
+		default:
 			n, udpRemoteAddr, err := l.conn.ReadFromUDP(buf)
 			if err != nil {
 				if _, ok := err.(*net.OpError); ok {
@@ -62,17 +77,16 @@ func (l *Listener) recv() {
 				panic(err)
 			}
 			l.handle(udpRemoteAddr, buf[:n])
-		} else {
-			return
 		}
 	}
 }
 
 func NewListener(conn *net.UDPConn) *Listener {
 	l := &Listener{
-		conn:         conn,
-		sessionMap:   new(sync.Map),
-		sessionQueue: make(chan *TTPSession, 64),
+		conn:     conn,
+		TTPMap:   new(sync.Map),
+		TTPQueue: make(chan *TTP, 64),
+		over:     make(chan struct{}),
 	}
 	go l.recv()
 	return l
@@ -84,7 +98,7 @@ func Listen(bindAddr string) (*Listener, error) {
 		return nil, resolveErr
 	}
 	//监听端口
-	udpConn, listenErr := net.ListenUDP("udp", udpAddr)
+	udpConn, listenErr := net.ListenUDP("udp4", udpAddr)
 	if listenErr != nil {
 		return nil, listenErr
 	}
