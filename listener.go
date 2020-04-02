@@ -43,9 +43,9 @@ func (l *Listener) handle(remoteAddr *net.UDPAddr, buf []byte) {
 	if sess, exist := l.TTPMap.Load(remoteAddr.String()); exist {
 		tt = sess.(*TTP)
 	} else {
+		log.Printf("任务注册，访问地址: %s\n", remoteAddr.String())
 		over := make(chan struct{})
-		tt = NewTTP(l.conn, remoteAddr, over)
-		log.Printf("任务开始，访问地址: %s\n", remoteAddr.String())
+		tt = NewPassiveTTP(l.conn, remoteAddr, over)
 		go func() {
 			select {
 			case <-tt.Done():

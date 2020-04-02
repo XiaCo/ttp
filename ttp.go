@@ -3,7 +3,6 @@ package ttp
 import (
 	"errors"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"log"
 	"net"
 	"os"
@@ -22,6 +21,9 @@ const (
 	ReplyNumbersFlag             // 回复客户端文件编号
 	ReplyConfirmFlag             // 编号包收到确认
 	FileDataFlag                 // 文件数据
+
+	Client = 0 // 主动创建ttp
+	Server = 1 // 被动创建ttp
 )
 
 var (
@@ -30,93 +32,75 @@ var (
 	savePathError   = errors.New("invalid save path")
 )
 
-type TTPMessage interface {
-	GetAck() uint32
-	SetAck(uint32)
-	GetPath() string
-	SetPath(string)
-	GetNumbers() []uint32
-	SetNumbers([]uint32)
-	GetStart() uint32
-	SetStart(uint32)
-	GetSpeed() uint32
-	SetSpeed(uint32)
-	GetData() []byte
-	SetData([]byte)
-
-	Reset()
-}
-
-type TTPInterpreter interface {
-	Marshal(v interface{}) ([]byte, error)
-	Unmarshal(buf []byte, v interface{}) error
-}
-
-type ProtobufInterpreter int
-
-func (p ProtobufInterpreter) Marshal(v interface{}) ([]byte, error) {
-	if msg, ok := v.(proto.Message); ok {
-		return proto.Marshal(msg)
-	} else {
-		return nil, protobufTypeErr
-	}
-}
-
-func (p ProtobufInterpreter) Unmarshal(buf []byte, v interface{}) error {
-	if msg, ok := v.(proto.Message); ok {
-		return proto.Unmarshal(buf, msg)
-	} else {
-		return protobufTypeErr
-	}
-}
-
 type TTP struct {
 	TTPInterpreter
 	readConnMsg  TTPMessage
 	writeConnMsg TTPMessage
-	speedCal     SpeedCalculator
 	conn         *net.UDPConn
 	remoteAddr   *net.UDPAddr
+	readQueue    chan []byte
+	direction    uint8
+	over         chan struct{}
+	overMu       *sync.Mutex
 
-	writeBuffer []byte // 读取文件的buffer
-	readQueue   chan []byte
+	// lazy make
+	file *os.File // 指向需要发送的文件或本地保存的文件
 
-	file               *os.File // 指向需要发送的文件或本地保存的文件
-	sendNumbersBuffer  chan uint32
+	// initial make
+	readReady chan struct{} // 握手完毕的信号，否则触发重试行为
+	speedCal  SpeedCalculator
+	// lazy make
 	nonRecvNumbers     map[uint32]struct{} // 用以判断 1.数据包是否已经写入过了 2.数据包剩余量
 	nonRecvNumbersLock *sync.Mutex
-	sendSpeed          uint32
-	sendSleep          func() // 控制发送速度
-	rto                int64  // time.Duration
-	//readTimeout        *time.Timer
-	writeTimeout  *time.Timer
-	readSemaphore chan struct{} // 每读取一个包，发送一个信号
+	rto                int64 // time.Duration
 
-	readReady chan struct{} // 握手完毕的信号
-	//writeReady  chan struct{} // 同上
-	initialized uint32 // 0 or 1
-	over        chan struct{}
-	overMu      *sync.Mutex
+	// initial make
+	initialized   uint32        // 0 or 1
+	writeBuffer   []byte        // 读取文件的buffer
+	writeTimeout  *time.Timer   // 当待发区一定时间没有编号时，认为任务完毕
+	readSemaphore chan struct{} // 每读取一个包，发送一个信号
+	// lazy make
+	sendNumbersBuffer chan uint32 // 存待发文件编号
+	sendSpeed         uint32
+	sendSleep         func() // 控制发送速度
 }
 
-func NewTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, c chan struct{}) *TTP {
+func NewPassiveTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, c chan struct{}) *TTP {
+	// initialize server attributes
 	t := &TTP{
 		TTPInterpreter: new(ProtobufInterpreter),
 		readConnMsg:    new(UDPFilePackage),
 		writeConnMsg:   new(UDPFilePackage),
-		speedCal:       NewSpeedCalculator(time.Second),
 		conn:           conn,
 		remoteAddr:     remoteAddr,
+		readQueue:      make(chan []byte, 1024),
+		direction:      Server,
+		over:           c,
+		overMu:         new(sync.Mutex),
 
-		readQueue:          make(chan []byte, 1024),
-		nonRecvNumbersLock: new(sync.Mutex),
-		readReady:          make(chan struct{}),
-		//writeReady:         make(chan struct{}),
-		//readTimeout:        nil,
-		writeTimeout:  time.NewTimer(time.Second * 10),
+		initialized:  0,
+		writeBuffer:  make([]byte, SplitFileSize),
+		writeTimeout: time.NewTimer(time.Second * 10),
+	}
+	go t.recvAndHandle()
+	return t
+}
+func NewDrivingTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, c chan struct{}) *TTP {
+	// initialize client attributes
+	t := &TTP{
+		TTPInterpreter: new(ProtobufInterpreter),
+		readConnMsg:    new(UDPFilePackage),
+		writeConnMsg:   new(UDPFilePackage),
+		conn:           conn,
+		remoteAddr:     remoteAddr,
+		readQueue:      make(chan []byte, 1024),
+		direction:      Client,
+		over:           c,
+		overMu:         new(sync.Mutex),
+
+		readReady:     make(chan struct{}), // 握手完毕的信号，否则触发重试行为
+		speedCal:      NewSpeedCalculator(time.Second),
 		readSemaphore: make(chan struct{}, 1024),
-		over:          c,
-		overMu:        new(sync.Mutex),
 	}
 	go t.recvAndHandle()
 	return t
@@ -133,6 +117,7 @@ func (ttp *TTP) Read(b []byte) (n int, err error) {
 }
 
 func (ttp *TTP) flushMsgToRemote() (n int, err error) {
+	// send the writeConnMsg to the udp buffer
 	buf, err := ttp.Marshal(ttp.writeConnMsg)
 	if err != nil {
 		return 0, err
@@ -141,7 +126,7 @@ func (ttp *TTP) flushMsgToRemote() (n int, err error) {
 }
 
 func (ttp *TTP) Write(b []byte) (n int, err error) {
-	// do nothing
+	// nothing to do
 	return 0, nil
 }
 
@@ -154,11 +139,13 @@ func (ttp *TTP) Close() error {
 	default:
 		close(ttp.over)
 		close(ttp.readQueue)
-		close(ttp.sendNumbersBuffer)
-		close(ttp.readReady)
-		//close(ttp.writeReady)
-		close(ttp.readSemaphore)
-		ttp.speedCal.Close()
+		if ttp.direction == Client {
+			close(ttp.readReady)
+			ttp.speedCal.Close()
+			close(ttp.readSemaphore)
+		} else if ttp.direction == Server {
+			close(ttp.sendNumbersBuffer)
+		}
 		fileCloseErr := ttp.file.Close()
 		if fileCloseErr != nil {
 			return fileCloseErr
@@ -194,40 +181,34 @@ func (ttp *TTP) SetWriteDeadline(t time.Time) error {
 func (ttp *TTP) setNumbersAndSendReplyNumber() {
 	// 设置编号并发送文件编号包
 	var numbersLength uint32
-	if atomic.LoadUint32(&ttp.initialized) != 1 {
-		goto sendNumbers // 已经初始化过的话，直接发送编号包
-	}
-	{ // 初始化下载任务信息
+	if swapped := atomic.CompareAndSwapUint32(&ttp.initialized, 0, 1); swapped {
+		// 初始化下载任务信息
+		atomic.StoreUint32(&ttp.initialized, 1)
 		path := ttp.readConnMsg.GetPath()
 		f, openErr := os.Open(path)
 		if openErr != nil {
-			log.Println(openErr)
+			panic(openErr) // todo 错误捕捉
 		} else {
 			ttp.file = f
 		}
 		stat, statErr := ttp.file.Stat() // 初始化请求信息
 		if statErr != nil {
-			log.Println(statErr)
+			panic(openErr) // todo
 		}
-
-		numbersLength := SplitFile(stat.Size())
-		log.Printf("包数：%d\n", numbersLength)
-		ttp.sendNumbersBuffer = make(chan uint32, numbersLength)
+		numbersLength = SplitFile(stat.Size())
+		log.Printf("发送包数：%d\n", numbersLength)
+		{ // lazy init
+			ttp.sendNumbersBuffer = make(chan uint32, numbersLength)
+		}
 		for i := uint32(0); i < numbersLength; i++ {
 			ttp.sendNumbersBuffer <- i
 		}
-		atomic.StoreUint32(&ttp.initialized, 1)
 	}
-sendNumbers:
-	{ // 给客户端发送编号回复包
-		ttp.writeConnMsg.SetAck(ReplyNumbersFlag)
-		ttp.writeConnMsg.SetPath(ttp.readConnMsg.GetPath())
-		ttp.writeConnMsg.SetNumbers([]uint32{numbersLength})
-		_, err := ttp.flushMsgToRemote()
-		if err != nil {
-			log.Println(err)
-		}
-	}
+	// 给客户端发送编号回复包
+	ttp.writeConnMsg.SetAck(ReplyNumbersFlag)
+	ttp.writeConnMsg.SetPath(ttp.readConnMsg.GetPath())
+	ttp.writeConnMsg.SetNumbers([]uint32{numbersLength})
+	ttp.flushMsgToRemote()
 }
 
 func (ttp *TTP) writeToFile() error {
@@ -268,7 +249,11 @@ func (ttp *TTP) sendFileSegment() error {
 		ttp.writeConnMsg.SetAck(FileDataFlag)
 		ttp.writeConnMsg.SetStart(uint32(offset))
 		ttp.writeConnMsg.SetData(ttp.writeBuffer[:n])
-		ttp.flushMsgToRemote()
+		_, err := ttp.flushMsgToRemote()
+		if err != nil {
+			panic(err)
+		}
+		time.Sleep(time.Millisecond)
 		ttp.sendSleep()
 	case <-ttp.writeTimeout.C: // 一定时间后，都没有收到补充请求包，待写区一直为空
 		ttp.Close()
@@ -277,7 +262,6 @@ func (ttp *TTP) sendFileSegment() error {
 }
 
 func (ttp *TTP) waitToSendFile() {
-	// todo <-ttp.writeReady 需要?
 	for {
 		select {
 		case <-ttp.over:
@@ -294,14 +278,19 @@ func (ttp *TTP) waitToSendFile() {
 
 func (ttp *TTP) sendReplyConfirm() {
 	ttp.writeConnMsg.SetAck(ReplyConfirmFlag)
-	ttp.flushMsgToRemote()
+	_, err := ttp.flushMsgToRemote()
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (ttp *TTP) handleMsg() {
 	switch ttp.readConnMsg.GetAck() {
 	case RequestPullFlag:
-		ttp.sendSpeed = ttp.readConnMsg.GetSpeed()
-		ttp.sendSleep = SleepAfterSendPackage(250, ttp.sendSpeed)
+		{ // lazy init
+			ttp.sendSpeed = ttp.readConnMsg.GetSpeed()
+			ttp.sendSleep = SleepAfterSendPackage(250, ttp.sendSpeed)
+		}
 		ttp.setNumbersAndSendReplyNumber()
 	case SupplyFlag:
 		for _, number := range ttp.readConnMsg.GetNumbers() {
@@ -313,10 +302,12 @@ func (ttp *TTP) handleMsg() {
 		ttp.Close()
 	case ReplyNumbersFlag:
 		log.Printf("the total package of file: %d\n", ttp.readConnMsg.GetNumbers()[0])
-		ttp.nonRecvNumbers = make(map[uint32]struct{}, ttp.readConnMsg.GetNumbers()[0])
-		atomic.AddInt64(&ttp.rto, -time.Now().UnixNano()) // 算出接收到编号包到发出请求的时间，是个负数
-		for i := uint32(0); i < ttp.readConnMsg.GetNumbers()[0]; i++ {
-			ttp.nonRecvNumbers[i] = struct{}{}
+		{ // lazy init
+			ttp.nonRecvNumbers = make(map[uint32]struct{}, ttp.readConnMsg.GetNumbers()[0])
+			atomic.AddInt64(&ttp.rto, -time.Now().UnixNano()) // 算出接收到编号包到发出请求的时间，是个负数
+			for i := uint32(0); i < ttp.readConnMsg.GetNumbers()[0]; i++ {
+				ttp.nonRecvNumbers[i] = struct{}{}
+			}
 		}
 		ttp.readReady <- struct{}{}
 		ttp.sendReplyConfirm()
@@ -333,11 +324,34 @@ func (ttp *TTP) recvAndHandle() error {
 			log.Printf("unmarshal : %s\n", unmarshalErr)
 			// todo listener.closeTTP(ttp.tid)
 			return unmarshalErr
+		} else {
+			// todo sync.pool ?
+			ttp.handleMsg()
 		}
-		// todo sync.pool ?
-		ttp.handleMsg()
 	}
 	return nil
+}
+
+func (ttp *TTP) readFromConn() {
+	buf := make([]byte, 1024*4)
+	for {
+		select {
+		case <-ttp.over:
+			return
+		default:
+			n, readErr := ttp.conn.Read(buf)
+			if readErr != nil {
+				log.Println(readErr)
+			} else {
+				b := make([]byte, n)
+				copy(b, buf[:n])
+				_, err := ttp.Read(b)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}
+	}
 }
 
 func (ttp *TTP) sendFileRequest(remoteFilePath string, speed uint32) {
@@ -385,39 +399,40 @@ func (ttp *TTP) sendOver() {
 	// 发送关闭包
 	ttp.writeConnMsg.SetAck(CloseFlag)
 	ttp.flushMsgToRemote()
+
 }
 
 func (ttp *TTP) pullRetryUntilReady(remoteFilePath string, speedKBS uint32) { // 发送请求信息直到收到服务器回应或者超时
 	timeout := time.After(time.Second * 10)
 	requestRetry := time.NewTicker(time.Second * 2)
 	defer requestRetry.Stop()
-retryLoop:
 	for i := 0; i < 5; i++ {
 		select {
 		case <-ttp.readReady:
 			log.Println("Ready to receive data")
-			break retryLoop
+			return
 		case <-requestRetry.C:
 			ttp.sendFileRequest(remoteFilePath, speedKBS)
 		case <-timeout:
 			ttp.Close()
+			return
 		}
 	}
 }
 
 func (ttp *TTP) Pull(remoteFilePath string, saveFilePath string, speedKBS uint32) error {
 	// 向服务端请求数据，并接收数据
-
-	// 初始化文件
 	if !SavePathIsValid(saveFilePath) {
 		return savePathError
 	}
-	ttp.file, _ = os.OpenFile(saveFilePath, os.O_CREATE|os.O_WRONLY, 0666)
-
+	{
+		ttp.file, _ = os.OpenFile(saveFilePath, os.O_CREATE|os.O_WRONLY, 0666)
+		ttp.nonRecvNumbersLock = new(sync.Mutex)
+	}
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go ttp.PrintDownloadProgress(&wg)
-
+	go ttp.readFromConn()
 	ttp.pullRetryUntilReady(remoteFilePath, speedKBS)
 
 	{ // 控制udp超时，在规定时间内未读到服务端的包

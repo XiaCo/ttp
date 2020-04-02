@@ -3,9 +3,14 @@ package main
 import (
 	"fmt"
 	"github.com/XiaCo/ttp"
+	"log"
 	"net"
 	"time"
 )
+
+func init() {
+	log.SetFlags(log.Llongfile | log.LstdFlags)
+}
 
 func listen(addr string) {
 	l, err := ttp.Listen(addr)
@@ -22,33 +27,20 @@ func listen(addr string) {
 }
 
 func main() {
-	go Client("0.0.0.0:55556")
-	listen("0.0.0.0:55555")
+	go Client()
+	listen("127.0.0.1:55555")
 }
 
-func Client(addr string) {
-	l, err := ttp.Listen(addr)
-	if err != nil {
-		panic(err)
-	}
-	go func() {
-		for {
-			c, acceptErr := l.AcceptTTP()
-			fmt.Println(c.RemoteAddr())
-			if acceptErr != nil {
-				fmt.Println(acceptErr)
-			}
-		}
-	}()
+func Client() {
+	//l, _:=net.ListenTCP()
+	//l.AcceptTCP()
 
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
 	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
-	c, _ := net.DialUDP("udp4", localAddr, remoteAddr)
+	conn, _ := net.ListenUDP("udp", localAddr)
+	//c, _ := net.DialUDP("udp4", localAddr, remoteAddr)
 	over := make(chan struct{})
-	tt := ttp.NewTTP(c, remoteAddr, over)
-	pullErr := tt.Pull("/Users/xia/java_error_in_goland.hprof", "./temp", 1000)
-	if pullErr != nil {
-		panic(err)
-	}
+	tt := ttp.NewDrivingTTP(conn, remoteAddr, over)
+	tt.Pull("/Users/xia/Desktop/gowork/Practice/ttp.zip", "./temp", 1000)
 }
