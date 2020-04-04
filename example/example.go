@@ -32,15 +32,12 @@ func main() {
 }
 
 func Client() {
-	//l, _:=net.ListenTCP()
-	//l.AcceptTCP()
-
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
 	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
 	conn, _ := net.ListenUDP("udp", localAddr)
-	//c, _ := net.DialUDP("udp4", localAddr, remoteAddr)
+	//c, _ := net.DialUDP("udp4", localAddr, remoteAddr)  dialUDP is unconnected
 	over := make(chan struct{})
 	tt := ttp.NewDrivingTTP(conn, remoteAddr, over)
-	tt.Pull("/Users/xia/Desktop/gowork/Practice/ttp.zip", "./temp", 1000)
+	tt.Pull("D:\\NLP\\nltk_data.zip", "./temp.zip", 50000)
 }

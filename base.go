@@ -21,8 +21,8 @@ type (
 	}
 
 	TTPInterpreter interface {
-		Marshal(v interface{}) ([]byte, error)
-		Unmarshal(buf []byte, v interface{}) error
+		Marshal(TTPMessage) ([]byte, error)
+		Unmarshal([]byte, TTPMessage) error
 	}
 
 	SpeedCalculator interface {
@@ -34,7 +34,7 @@ type (
 
 type ProtobufInterpreter int
 
-func (p ProtobufInterpreter) Marshal(v interface{}) ([]byte, error) {
+func (p ProtobufInterpreter) Marshal(v TTPMessage) ([]byte, error) {
 	if msg, ok := v.(proto.Message); ok {
 		return proto.Marshal(msg)
 	} else {
@@ -42,7 +42,7 @@ func (p ProtobufInterpreter) Marshal(v interface{}) ([]byte, error) {
 	}
 }
 
-func (p ProtobufInterpreter) Unmarshal(buf []byte, v interface{}) error {
+func (p ProtobufInterpreter) Unmarshal(buf []byte, v TTPMessage) error {
 	if msg, ok := v.(proto.Message); ok {
 		return proto.Unmarshal(buf, msg)
 	} else {

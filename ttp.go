@@ -22,8 +22,9 @@ const (
 	ReplyConfirmFlag             // 编号包收到确认
 	FileDataFlag                 // 文件数据
 
-	Client = 0 // 主动创建ttp
-	Server = 1 // 被动创建ttp
+	Duplex = 0 // 无方向
+	Client = 1 // 主动创建ttp
+	Server = 2 // 被动创建ttp
 )
 
 var (
@@ -65,7 +66,7 @@ type TTP struct {
 	sendSleep         func() // 控制发送速度
 }
 
-func NewPassiveTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, c chan struct{}) *TTP {
+func NewPassiveTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, over chan struct{}) *TTP {
 	// initialize server attributes
 	t := &TTP{
 		TTPInterpreter: new(ProtobufInterpreter),
@@ -75,7 +76,7 @@ func NewPassiveTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, c chan struct{}) 
 		remoteAddr:     remoteAddr,
 		readQueue:      make(chan []byte, 1024),
 		direction:      Server,
-		over:           c,
+		over:           over,
 		overMu:         new(sync.Mutex),
 
 		initialized:  0,
@@ -253,7 +254,6 @@ func (ttp *TTP) sendFileSegment() error {
 		if err != nil {
 			panic(err)
 		}
-		time.Sleep(time.Millisecond)
 		ttp.sendSleep()
 	case <-ttp.writeTimeout.C: // 一定时间后，都没有收到补充请求包，待写区一直为空
 		ttp.Close()
@@ -289,7 +289,8 @@ func (ttp *TTP) handleMsg() {
 	case RequestPullFlag:
 		{ // lazy init
 			ttp.sendSpeed = ttp.readConnMsg.GetSpeed()
-			ttp.sendSleep = SleepAfterSendPackage(250, ttp.sendSpeed)
+			log.Printf("speed limit:%d\n", ttp.sendSpeed)
+			ttp.sendSleep = SleepAfterSendPackage(200, ttp.sendSpeed)
 		}
 		ttp.setNumbersAndSendReplyNumber()
 	case SupplyFlag:
@@ -347,7 +348,10 @@ func (ttp *TTP) readFromConn() {
 				copy(b, buf[:n])
 				_, err := ttp.Read(b)
 				if err != nil {
-					panic(err)
+					//if err == fullError{
+					//	continue
+					//}
+					log.Println(err)
 				}
 			}
 		}
@@ -399,7 +403,6 @@ func (ttp *TTP) sendOver() {
 	// 发送关闭包
 	ttp.writeConnMsg.SetAck(CloseFlag)
 	ttp.flushMsgToRemote()
-
 }
 
 func (ttp *TTP) pullRetryUntilReady(remoteFilePath string, speedKBS uint32) { // 发送请求信息直到收到服务器回应或者超时
@@ -420,7 +423,7 @@ func (ttp *TTP) pullRetryUntilReady(remoteFilePath string, speedKBS uint32) { //
 	}
 }
 
-func (ttp *TTP) Pull(remoteFilePath string, saveFilePath string, speedKBS uint32) error {
+func (ttp *TTP) Pull(remoteFilePath string, saveFilePath string, speedKBS uint16) error {
 	// 向服务端请求数据，并接收数据
 	if !SavePathIsValid(saveFilePath) {
 		return savePathError
@@ -433,11 +436,12 @@ func (ttp *TTP) Pull(remoteFilePath string, saveFilePath string, speedKBS uint32
 	wg.Add(1)
 	go ttp.PrintDownloadProgress(&wg)
 	go ttp.readFromConn()
-	ttp.pullRetryUntilReady(remoteFilePath, speedKBS)
+	ttp.pullRetryUntilReady(remoteFilePath, uint32(speedKBS))
 
 	{ // 控制udp超时，在规定时间内未读到服务端的包
 		rtt := time.Duration(-atomic.LoadInt64(&ttp.rto) * 2)
 		readTimeout := time.NewTimer(rtt)
+		defer readTimeout.Stop()
 		for {
 			select {
 			case <-readTimeout.C:
@@ -470,14 +474,12 @@ func (ttp *TTP) GetProgress() uint32 {
 func (ttp *TTP) PrintDownloadProgress(wg *sync.WaitGroup) {
 	delay := time.NewTicker(time.Second)
 	defer delay.Stop()
-	clear := "\r                                                                       "
+	clear := "\r                                                                          "
 	for {
 		select {
 		case <-delay.C:
-			speed := ttp.GetSpeed()
-			willDownload := ttp.GetProgress()
 			fmt.Print(clear)
-			fmt.Printf("\rcurrent speed: %d kb/s\t\twill download: %d kb", speed/1024, willDownload)
+			fmt.Printf("\rcurrent speed: %d kb/s\t\twill download: %d kb", ttp.GetSpeed()/1024, ttp.GetProgress())
 		case <-ttp.over:
 			fmt.Print(clear)
 			fmt.Printf("\rfile was downloaded, save path: %s\n", ttp.file.Name())

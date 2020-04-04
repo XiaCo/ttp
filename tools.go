@@ -24,8 +24,7 @@ func init() {
 
 func SplitFile(size int64) uint32 {
 	// 分割文件成小块编号
-	max := uint32(math.Ceil(float64(size) / float64(SplitFileSize)))
-	return max
+	return uint32(math.Ceil(float64(size) / float64(SplitFileSize)))
 }
 
 func SavePathIsValid(p string) bool {
@@ -73,13 +72,13 @@ func (s *speedCalculator) Close() {
 func NewSpeedCalculator(t time.Duration) *speedCalculator {
 	delay := time.NewTicker(t)
 	s := speedCalculator{0, 0, delay, make(chan struct{})}
-	go func() {
+	go func() { // update speed every t
 		for {
 			select {
 			case <-delay.C:
 				f := atomic.LoadUint32(&s.flow)
 				atomic.StoreUint32(&s.speed, f/uint32(t.Seconds()))
-				atomic.StoreUint32(&s.flow, 0)
+				atomic.AddUint32(&s.flow, -f)
 			case <-s.over:
 				return
 			}
