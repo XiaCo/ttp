@@ -45,7 +45,7 @@ func (l *Listener) handle(remoteAddr *net.UDPAddr, buf []byte) {
 	} else {
 		log.Printf("任务注册，访问地址: %s\n", remoteAddr.String())
 		over := make(chan struct{})
-		tt = NewPassiveTTP(l.conn, remoteAddr, over)
+		tt = NewTTP(l.conn, remoteAddr, over)
 		go func() {
 			select {
 			case <-tt.Done():

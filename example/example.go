@@ -26,18 +26,37 @@ func listen(addr string) {
 	}
 }
 
-func main() {
-	go Client()
+func TestPull() {
+	go Pull()
 	listen("127.0.0.1:55555")
 }
 
-func Client() {
+func TestPush() {
+	go Push()
+	listen("127.0.0.1:55555")
+}
+
+func main() {
+	//TestPull()
+	TestPush()
+}
+
+func Pull() {
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
 	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
 	conn, _ := net.ListenUDP("udp", localAddr)
-	//c, _ := net.DialUDP("udp4", localAddr, remoteAddr)  dialUDP is unconnected
 	over := make(chan struct{})
-	tt := ttp.NewDrivingTTP(conn, remoteAddr, over)
-	tt.Pull("D:\\NLP\\nltk_data.zip", "./temp.zip", 50000)
+	tt := ttp.NewTTP(conn, remoteAddr, over)
+	tt.Pull("/Users/xia/Downloads/GoLand201913.zip", "./temp.zip", 5000)
+}
+
+func Push() {
+	time.Sleep(time.Second)
+	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
+	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
+	conn, _ := net.ListenUDP("udp", localAddr)
+	over := make(chan struct{})
+	tt := ttp.NewTTP(conn, remoteAddr, over)
+	tt.Push("/Users/xia/Downloads/GoLand201913.zip", 5000)
 }

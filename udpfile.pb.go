@@ -4,9 +4,9 @@
 package ttp
 
 import (
-	fmt "fmt"
-	proto "github.com/golang/protobuf/proto"
-	math "math"
+	"fmt"
+	"github.com/golang/protobuf/proto"
+	"math"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -32,7 +32,9 @@ type UDPFilePackage struct {
 	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *UDPFilePackage) Reset()         { *m = UDPFilePackage{} }
+func (m *UDPFilePackage) Reset() {
+	m.Data = nil
+}
 func (m *UDPFilePackage) String() string { return proto.CompactTextString(m) }
 func (*UDPFilePackage) ProtoMessage()    {}
 func (*UDPFilePackage) Descriptor() ([]byte, []int) {
