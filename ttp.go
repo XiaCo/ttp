@@ -345,10 +345,6 @@ func (ttp *TTP) readFromConn() {
 				copy(b, buf[:n])
 				_, err := ttp.Read(b)
 				if err != nil {
-					if err == fullError {
-						//continue
-						time.Sleep(time.Second)
-					}
 					log.Println(err)
 				}
 			}
@@ -404,7 +400,7 @@ func (ttp *TTP) sendOver() {
 
 func (ttp *TTP) readSemaphoreTimeout() {
 	// 控制udp超时，在规定时间内未读到服务端的包
-	rtt := time.Duration(-atomic.LoadInt64(&ttp.rto) * 2)
+	rtt := time.Duration(-atomic.LoadInt64(&ttp.rto) * 200)
 	readTimeout := time.NewTimer(rtt)
 	defer readTimeout.Stop()
 	for {
@@ -413,7 +409,6 @@ func (ttp *TTP) readSemaphoreTimeout() {
 			ttp.sendNonRecvNumbers()
 		case <-ttp.readSemaphore:
 		case <-ttp.over:
-			log.Println("\nend")
 			return
 		}
 		readTimeout.Reset(rtt)
