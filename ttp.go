@@ -400,7 +400,7 @@ func (ttp *TTP) sendOver() {
 
 func (ttp *TTP) readSemaphoreTimeout() {
 	// 控制udp超时，在规定时间内未读到服务端的包
-	rtt := time.Duration(-atomic.LoadInt64(&ttp.rto) * 200)
+	rtt := time.Duration(-atomic.LoadInt64(&ttp.rto) * 2)
 	readTimeout := time.NewTimer(rtt)
 	defer readTimeout.Stop()
 	for {
