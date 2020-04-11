@@ -28,23 +28,24 @@ func listen(addr string) {
 
 func TestPull() {
 	go Pull()
-	listen("127.0.0.1:55555")
+	listen("0.0.0.0:55555")
 }
 
 func TestPush() {
 	go Push()
-	listen("127.0.0.1:55555")
+	listen("0.0.0.0:55555")
 }
 
 func main() {
 	//TestPull()
-	TestPush()
+	//TestPush()
+	//listen("0.0.0.0:56789")
 }
 
 func Pull() {
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
-	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
+	localAddr, _ := net.ResolveUDPAddr("udp4", "0.0.0.0:56321")
 	conn, _ := net.ListenUDP("udp", localAddr)
 	over := make(chan struct{})
 	tt := ttp.NewTTP(conn, remoteAddr, over)
@@ -54,7 +55,7 @@ func Pull() {
 func Push() {
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:55555")
-	localAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56321")
+	localAddr, _ := net.ResolveUDPAddr("udp4", "0.0.0.0:56321")
 	conn, _ := net.ListenUDP("udp", localAddr)
 	over := make(chan struct{})
 	tt := ttp.NewTTP(conn, remoteAddr, over)

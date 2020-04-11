@@ -227,6 +227,7 @@ func (ttp *TTP) sendFileSegment() error {
 		ttp.sendSleep()
 		ttp.writeTimeout.Reset(time.Second * 10)
 	case <-ttp.writeTimeout.C: // 一定时间后，都没有收到补充请求包，待写区一直为空
+		log.Println("待发区为空，timeout")
 		ttp.Close()
 	}
 	return nil
@@ -236,9 +237,6 @@ func (ttp *TTP) waitToSendFile() {
 	for {
 		select {
 		case <-ttp.over:
-			return
-		case <-ttp.writeTimeout.C:
-			log.Println("待发区为空，timeout")
 			return
 		default:
 			err := ttp.sendFileSegment()
@@ -279,14 +277,14 @@ func (ttp *TTP) handleMsg() {
 		}
 		ttp.sendReplyConfirm()
 	case SupplyFlag:
-		log.Println(len(ttp.readConnMsg.GetNumbers()))
+		log.Printf("补充包数:%d\n", len(ttp.readConnMsg.GetNumbers()))
 		for _, number := range ttp.readConnMsg.GetNumbers() {
 			ttp.sendNumbersBuffer <- number
 		}
 		log.Printf("剩余:%d\n", len(ttp.sendNumbersBuffer))
 	case ReplyConfirmFlag:
 		close(ttp.writeReady)
-		ttp.waitToSendFile()
+		go ttp.waitToSendFile()
 	case CloseFlag:
 		ttp.Close()
 	case ReplyNumbersFlag:

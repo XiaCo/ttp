@@ -33,6 +33,7 @@ type UDPFilePackage struct {
 }
 
 func (m *UDPFilePackage) Reset() {
+	m.Number = nil
 	m.Data = nil
 }
 func (m *UDPFilePackage) String() string { return proto.CompactTextString(m) }
