@@ -45,19 +45,19 @@ func main() {
 func Pull() {
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56789")
-	localAddr, _ := net.ResolveUDPAddr("udp4", "0.0.0.0:56321")
+	localAddr, _ := net.ResolveUDPAddr("udp4", "0.0.0.0:0")
 	conn, _ := net.ListenUDP("udp", localAddr)
 	over := make(chan struct{})
 	tt := ttp.NewTTP(conn, remoteAddr, over)
-	tt.Pull("/root/Python-3.7.3.tar", "./temp.tar", 5000)
+	fmt.Println(tt.Pull("/root/Python-3.7.3.tar", "./temp.tar", 5000))
 }
 
 func Push() {
 	time.Sleep(time.Second)
 	remoteAddr, _ := net.ResolveUDPAddr("udp4", "127.0.0.1:56789")
-	localAddr, _ := net.ResolveUDPAddr("udp4", "0.0.0.0:56321")
+	localAddr, _ := net.ResolveUDPAddr("udp4", "0.0.0.0:0")
 	conn, _ := net.ListenUDP("udp", localAddr)
 	over := make(chan struct{})
 	tt := ttp.NewTTP(conn, remoteAddr, over)
-	tt.Push("./temp.tar", "", 5000)
+	fmt.Println(tt.Push("./temp.tar", "", 5000))
 }
