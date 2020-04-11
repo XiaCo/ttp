@@ -273,7 +273,12 @@ func (ttp *TTP) handleMsg() {
 			}
 			atomic.StoreInt64(&ttp.rto, time.Now().UnixNano())
 			fileName := ttp.readConnMsg.GetPath()
-			ttp.file, _ = os.OpenFile("./"+fileName, os.O_WRONLY|os.O_CREATE, 0666)
+			if SavePathIsValid(fileName) {
+				ttp.file, _ = os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0666)
+			} else {
+				ttp.Close()
+				return
+			}
 		}
 		ttp.sendReplyConfirm()
 	case SupplyFlag:
@@ -473,7 +478,7 @@ func (ttp *TTP) Pull(remoteFilePath string, saveFilePath string, speedKBS uint16
 	return nil
 }
 
-func (ttp *TTP) Push(localFilePath string, speedKBS uint32) error {
+func (ttp *TTP) Push(localFilePath string, remoteSavePath string, speedKBS uint32) error {
 	fInfo, statErr := os.Stat(localFilePath)
 	if statErr != nil {
 		return statErr
@@ -488,7 +493,10 @@ func (ttp *TTP) Push(localFilePath string, speedKBS uint32) error {
 			ttp.sendNumbersBuffer <- i
 		}
 	}
-	go ttp.pushRetryUntilReady(fInfo.Name(), numbersLength)
+	if remoteSavePath == "" {
+		remoteSavePath = fInfo.Name()
+	}
+	go ttp.pushRetryUntilReady(remoteSavePath, numbersLength)
 	ttp.readFromConn()
 	return nil
 }
