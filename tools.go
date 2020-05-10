@@ -3,24 +3,22 @@ package ttp
 import (
 	"math"
 	"os"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
-const (
-	ttpUnit uint32 = 1472
-)
-
-var (
-	bytePool sync.Pool
-)
-
-func init() {
-	bytePool.New = func() interface{} {
-		return make([]byte, ttpUnit)
-	}
-}
+//const (
+//	ttpUnit uint32 = 1472
+//)
+//
+//var (
+//	bytePool sync.Pool
+//)
+//
+//func init() {
+//	bytePool.New = func() interface{} {
+//		return make([]byte, ttpUnit)
+//	}
+//}
 
 func SplitFile(size int64) uint32 {
 	// 分割文件成小块编号
@@ -47,42 +45,4 @@ func SleepAfterSendPackage(n uint32, sendSpeed uint32) func() {
 			count = 0
 		}
 	}
-}
-
-type speedCalculator struct {
-	flow  uint32
-	speed uint32
-	t     *time.Ticker
-	over  chan struct{}
-}
-
-func (s *speedCalculator) GetSpeed() uint32 {
-	return atomic.LoadUint32(&s.speed)
-}
-
-func (s *speedCalculator) AddFlow(n uint32) {
-	atomic.AddUint32(&s.flow, n)
-}
-
-func (s *speedCalculator) Close() {
-	s.t.Stop()
-	s.over <- struct{}{}
-}
-
-func NewSpeedCalculator(t time.Duration) *speedCalculator {
-	delay := time.NewTicker(t)
-	s := speedCalculator{0, 0, delay, make(chan struct{})}
-	go func() { // update speed every t
-		for {
-			select {
-			case <-delay.C:
-				f := atomic.LoadUint32(&s.flow)
-				atomic.StoreUint32(&s.speed, f/uint32(t.Seconds()))
-				atomic.AddUint32(&s.flow, -f)
-			case <-s.over:
-				return
-			}
-		}
-	}()
-	return &s
 }

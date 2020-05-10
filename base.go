@@ -1,6 +1,10 @@
 package ttp
 
-import "github.com/golang/protobuf/proto"
+import (
+	"github.com/golang/protobuf/proto"
+	"sync/atomic"
+	"time"
+)
 
 type (
 	TTPMessage interface {
@@ -48,4 +52,42 @@ func (p ProtobufInterpreter) Unmarshal(buf []byte, v TTPMessage) error {
 	} else {
 		return protobufTypeErr
 	}
+}
+
+type speedCalculator struct {
+	flow  uint32
+	speed uint32
+	t     *time.Ticker
+	over  chan struct{}
+}
+
+func (s *speedCalculator) GetSpeed() uint32 {
+	return atomic.LoadUint32(&s.speed)
+}
+
+func (s *speedCalculator) AddFlow(n uint32) {
+	atomic.AddUint32(&s.flow, n)
+}
+
+func (s *speedCalculator) Close() {
+	s.t.Stop()
+	close(s.over)
+}
+
+func NewSpeedCalculator(t time.Duration) *speedCalculator {
+	delay := time.NewTicker(t)
+	s := speedCalculator{0, 0, delay, make(chan struct{})}
+	go func() { // update speed every t
+		for {
+			select {
+			case <-delay.C:
+				f := atomic.LoadUint32(&s.flow)
+				atomic.StoreUint32(&s.speed, f/uint32(t.Seconds()))
+				atomic.AddUint32(&s.flow, -f)
+			case <-s.over:
+				return
+			}
+		}
+	}()
+	return &s
 }

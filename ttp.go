@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SplitFileSize uint32 = 1024 * 1 // 将文件切割成小块，每块的大小  todo 暂测16k无法接受到
+	SplitFileSize uint32 = 1024 * 1 // 将文件切割成小块，每块的大小  why? 暂测16k无法接受到
 
 	RequestPullFlag  = 1 << iota // 请求文件
 	RequestPushFlag              // 请求推送文件
@@ -58,6 +58,7 @@ type TTP struct {
 	sendNumbersBuffer chan uint32 // 存待发文件编号
 	sendSpeed         uint32
 	sendSleep         func() // 控制发送速度
+	lastSupplyCount   int    // 接收端上一次请求补充的包的数量
 }
 
 func NewTTP(conn *net.UDPConn, remoteAddr *net.UDPAddr, over chan struct{}) *TTP {
@@ -117,11 +118,7 @@ func (ttp *TTP) Close() error {
 	default:
 		close(ttp.over)
 		close(ttp.readQueue)
-		fileCloseErr := ttp.file.Close()
-		if fileCloseErr != nil {
-			return fileCloseErr
-		}
-		return nil
+		return ttp.file.Close()
 	}
 }
 
@@ -282,11 +279,10 @@ func (ttp *TTP) handleMsg() {
 		}
 		ttp.sendReplyConfirm()
 	case SupplyFlag:
-		log.Printf("补充包数:%d\n", len(ttp.readConnMsg.GetNumbers()))
 		for _, number := range ttp.readConnMsg.GetNumbers() {
 			ttp.sendNumbersBuffer <- number
 		}
-		log.Printf("剩余:%d\n", len(ttp.sendNumbersBuffer))
+		log.Printf("请求地址%s, 剩余:%d\n", ttp.remoteAddr.String(), len(ttp.sendNumbersBuffer))
 	case ReplyConfirmFlag:
 		close(ttp.writeReady)
 		go ttp.waitToSendFile()
@@ -317,20 +313,18 @@ func (ttp *TTP) handleMsg() {
 	}
 }
 
-func (ttp *TTP) recvAndHandle() error {
+func (ttp *TTP) recvAndHandle() {
 	// read from readQueue and handle it forever
 	for data := range ttp.readQueue {
 		unmarshalErr := ttp.Unmarshal(data, ttp.readConnMsg)
 		if unmarshalErr != nil {
 			log.Printf("unmarshal : %s\n", unmarshalErr)
-			// todo listener.closeTTP(ttp.tid)
-			return unmarshalErr
+			ttp.Close()
 		} else {
 			// todo sync.pool ?
 			ttp.handleMsg()
 		}
 	}
-	return nil
 }
 
 func (ttp *TTP) readFromConn() {
@@ -368,17 +362,24 @@ func (ttp *TTP) sendNonRecvNumbers() {
 
 	// copying data that has not been received
 	ttp.nonRecvNumbersLock.Lock()
-	copyNumbers := make(map[uint32]struct{}, len(ttp.nonRecvNumbers))
+	nonRecvCount := len(ttp.nonRecvNumbers)
+	if nonRecvCount == ttp.lastSupplyCount { // 防止网络不好时，rtt过大，发送冗余的补充包
+		ttp.nonRecvNumbersLock.Unlock()
+		return
+	} else {
+		ttp.lastSupplyCount = nonRecvCount
+	}
+	copyNumbers := make(map[uint32]struct{}, nonRecvCount)
 	for n := range ttp.nonRecvNumbers {
 		copyNumbers[n] = struct{}{}
 	}
 	ttp.nonRecvNumbersLock.Unlock()
 
 	// packet transmission
-	numbers := [1000]uint32{}
+	numbers := [500]uint32{}
 	s := numbers[:0]
 	for fileNumber := range copyNumbers {
-		if len(s) != 1000 {
+		if len(s) != 500 {
 			s = append(s, fileNumber)
 		} else {
 			ttp.writeConnMsg.SetAck(SupplyFlag)
@@ -471,7 +472,6 @@ func (ttp *TTP) Pull(remoteFilePath string, saveFilePath string, speedKBS uint16
 		ttp.file, _ = os.OpenFile(saveFilePath, os.O_CREATE|os.O_WRONLY, 0666)
 		ttp.nonRecvNumbersLock = new(sync.Mutex)
 	}
-	go ttp.PrintDownloadProgress()
 	go ttp.readFromConn()
 	ttp.pullRetryUntilReady(remoteFilePath, uint32(speedKBS))
 	ttp.readSemaphoreTimeout()
